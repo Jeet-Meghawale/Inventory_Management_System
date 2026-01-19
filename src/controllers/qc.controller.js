@@ -10,7 +10,7 @@ export const inspect = async (req, res) => {
     return res.status(400).json({ message: "Missing required fields" });
   }
 
-  if (!["ACCEPT", "REJECT"].includes(result)) {
+  if (!["ACCEPTED", "REJECTED"].includes(result)) {
     return res.status(400).json({ message: "Invalid QC result" });
   }
 
@@ -42,7 +42,7 @@ export const inspect = async (req, res) => {
     await tx.inboundLot.update({
       where: { id: inbound_lot_id },
       data: {
-        qc_status: result === "ACCEPT" ? "ACCEPTED" : "REJECTED",
+        qc_status: result,
       },
     });
   });

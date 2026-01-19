@@ -48,12 +48,7 @@ export const createPallet = async (req, res) => {
  * MOVE PALLET
  */
 export const movePallet = async (req, res) => {
-    const {
-        pallet_id,
-        from_location_id,
-        to_location_id,
-        moved_quantity,
-    } = req.body;
+    const { pallet_id, from_location_id, to_location_id, moved_quantity } = req.body;
 
     if (!pallet_id || !to_location_id || !moved_quantity) {
         return res.status(400).json({ message: "Missing required fields" });
@@ -69,30 +64,45 @@ export const movePallet = async (req, res) => {
 
     await prisma.palletMovement.create({
         data: {
-            pallet_id,
-            from_location_id,
-            to_location_id,
-            moved_quantity,
-            moved_by: req.user.id,
-        },
+            pallet: { connect: { id: pallet_id } },
+            fromLocation: from_location_id
+                ? { connect: { id: Number(from_location_id) } }
+                : undefined,
+            toLocation: { connect: { id: Number(to_location_id) } },
+            creator: { connect: { id: req.user.id } },
+            moved_quantity: Number(moved_quantity) // ✅ THIS WAS MISSING
+        }
     });
+
+
 
     res.json({ message: "Pallet moved successfully" });
 };
+
 
 /**
  * LIST PALLETS
  */
 export const listPallets = async (req, res) => {
-    const pallets = await prisma.pallet.findMany({
+  const pallets = await prisma.pallet.findMany({
+    include: {
+      inboundLot: true,
+      unit: true,
+      movements: {
         include: {
-            inboundLot: true,
-            location: true,
+          toLocation: true,
         },
         orderBy: {
-            created_at: "desc",
+          created_at: "desc",
         },
-    });
+        take: 1 
+      }
+    },
+    orderBy: {
+      pallet_code: "asc",
+    },
+  });
 
-    res.json(pallets);
+  res.json(pallets);
 };
+

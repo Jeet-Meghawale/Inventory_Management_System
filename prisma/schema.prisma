@@ -93,14 +93,15 @@ model Unit {
   unit_name String  @unique
   is_active Boolean @default(true)
 
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+
   created_by String
   creator    User   @relation(fields: [created_by], references: [id])
 
   inboundLots      InboundLot[]
   pallets          Pallet[]
   productionOrders ProductionOrder[]
-
-  @@map("unit")
 }
 
 //////////////////////////////////////////////////////
@@ -174,10 +175,13 @@ model Pallet {
 //////////////////////////////////////////////////////
 
 model Location {
-  id            String       @id @default(uuid())
+  id            Int          @id @default(autoincrement())
   location_type LocationType
   rack_code     String?
   shelf_code    String?
+
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
 
   movementsFrom PalletMovement[] @relation("FromLocation")
   movementsTo   PalletMovement[] @relation("ToLocation")
@@ -190,21 +194,23 @@ model Location {
 //////////////////////////////////////////////////////
 
 model PalletMovement {
-  id               String   @id @default(uuid())
-  pallet_id        String
-  from_location_id String?
-  to_location_id   String
-  moved_quantity   Float
-  moved_at         DateTime @default(now())
+  id Int @id @default(autoincrement())
 
-  moved_by String
-  mover    User   @relation(fields: [moved_by], references: [id])
+  pallet_id String
+  pallet    Pallet @relation(fields: [pallet_id], references: [id])
 
-  pallet       Pallet    @relation(fields: [pallet_id], references: [id])
+  from_location_id Int?
+  to_location_id   Int
+
   fromLocation Location? @relation("FromLocation", fields: [from_location_id], references: [id])
   toLocation   Location  @relation("ToLocation", fields: [to_location_id], references: [id])
 
-  @@map("palletmovement")
+  moved_quantity Float // ✅ ADD THIS
+
+  created_by String
+  creator    User   @relation(fields: [created_by], references: [id])
+
+  created_at DateTime @default(now())
 }
 
 //////////////////////////////////////////////////////
