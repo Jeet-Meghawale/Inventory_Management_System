@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { issueMaterial } from "../controllers/issue.controller.js";
+import { autoIssueMaterial, issueMaterial } from "../controllers/issue.controller.js";
 import { auth } from "../middlewares/auth.middleware.js";
 import { allow } from "../middlewares/role.middleware.js";
 

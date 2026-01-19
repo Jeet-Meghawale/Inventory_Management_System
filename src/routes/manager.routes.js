@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { editEntity } from "../controllers/manager.controller.js";
+import { editEntity, managerOverview } from "../controllers/manager.controller.js";
 import { auth } from "../middlewares/auth.middleware.js";
 import { allow } from "../middlewares/role.middleware.js";
 

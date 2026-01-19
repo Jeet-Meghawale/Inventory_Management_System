@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { createPallet, movePallet } from "../controllers/pallet.controller.js";
+import { createPallet, listPallets, movePallet } from "../controllers/pallet.controller.js";
 import { auth } from "../middlewares/auth.middleware.js";
 import { allow } from "../middlewares/role.middleware.js";
 

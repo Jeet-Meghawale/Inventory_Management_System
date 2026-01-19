@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { createOrder } from "../controllers/production.controller.js";
+import { createOrder, listOrders } from "../controllers/production.controller.js";
 import { auth } from "../middlewares/auth.middleware.js";
 import { allow } from "../middlewares/role.middleware.js";
 
