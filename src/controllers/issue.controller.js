@@ -1,5 +1,8 @@
 import prisma from "../config/db.js";
 
+/**
+ * MANUAL ISSUE (WITH OVERRIDE CONTROL)
+ */
 export const issueMaterial = async (req, res) => {
   const {
     production_order_id,
@@ -8,6 +11,27 @@ export const issueMaterial = async (req, res) => {
     override_used = false,
     approved_by,
   } = req.body;
+
+  if (!production_order_id || !pallet_id || !issued_quantity) {
+    return res.status(400).json({ message: "Missing required fields" });
+  }
+
+  const order = await prisma.productionOrder.findUnique({
+    where: { id: production_order_id },
+  });
+
+  if (!order || order.status === "COMPLETED") {
+    return res.status(400).json({ message: "Invalid or completed order" });
+  }
+
+  const remainingOrderQty =
+    order.required_quantity - order.issued_quantity;
+
+  if (issued_quantity > remainingOrderQty) {
+    return res.status(400).json({
+      message: "Issued quantity exceeds remaining order requirement",
+    });
+  }
 
   const pallet = await prisma.pallet.findUnique({
     where: { id: pallet_id },
@@ -26,7 +50,6 @@ export const issueMaterial = async (req, res) => {
     return res.status(400).json({ message: "Insufficient pallet quantity" });
   }
 
-  // Enforce override approval
   if (override_used && !approved_by) {
     return res.status(403).json({
       message: "Manager approval required for FIFO override",
@@ -55,14 +78,13 @@ export const issueMaterial = async (req, res) => {
       },
     });
 
-    await tx.productionOrder.update({
+    const updatedOrder = await tx.productionOrder.update({
       where: { id: production_order_id },
       data: {
         issued_quantity: { increment: issued_quantity },
       },
     });
 
-    // Audit override
     if (override_used) {
       await tx.auditLog.create({
         data: {
@@ -75,88 +97,102 @@ export const issueMaterial = async (req, res) => {
       });
     }
 
-    return createdIssue;
+    return { createdIssue, updatedOrder };
   });
 
-  res.status(201).json(issue);
+  res.status(201).json(issue.createdIssue);
 };
 
-
+/**
+ * AUTO ISSUE (FIFE – SYSTEM DECIDES)
+ */
 export const autoIssueMaterial = async (req, res) => {
   const { production_order_id } = req.body;
 
+  if (!production_order_id) {
+    return res.status(400).json({ message: "Production order id required" });
+  }
+
   const order = await prisma.productionOrder.findUnique({
     where: { id: production_order_id },
-    include: { unit: true },
   });
 
-  if (!order) {
-    return res.status(404).json({ message: "Production order not found" });
+  if (!order || order.status === "COMPLETED") {
+    return res.status(400).json({ message: "Invalid or completed order" });
   }
 
-  let remainingQty = order.required_quantity;
+  let remainingQty =
+    order.required_quantity - order.issued_quantity;
+
+  if (remainingQty <= 0) {
+    return res.status(400).json({ message: "Order already fulfilled" });
+  }
+
   const issues = [];
 
-  const pallets = await prisma.pallet.findMany({
-    where: {
-      status: "ACTIVE",
-      current_quantity: { gt: 0 },
-      inboundLot: {
-        material_name: order.material_name,
-        qc_status: "ACCEPTED",
-      },
-    },
-    include: {
-      inboundLot: true,
-    },
-    orderBy: {
-      inboundLot: {
-        expiry_date: "asc",
-      },
-    },
-  });
-
-  for (const pallet of pallets) {
-    if (remainingQty <= 0) break;
-
-    const issueQty = Math.min(pallet.current_quantity, remainingQty);
-
-    // record issue
-    const issue = await prisma.materialIssue.create({
-      data: {
-        production_order_id,
-        pallet_id: pallet.id,
-        issued_quantity: issueQty,
-        override_used: false,
-      },
-    });
-
-    // update pallet qty
-    await prisma.pallet.update({
-      where: { id: pallet.id },
-      data: {
-        current_quantity: {
-          decrement: issueQty,
+  await prisma.$transaction(async (tx) => {
+    const pallets = await tx.pallet.findMany({
+      where: {
+        status: "ACTIVE",
+        current_quantity: { gt: 0 },
+        inboundLot: {
+          material_name: order.material_name,
+          qc_status: "ACCEPTED",
         },
-        status:
-          pallet.current_quantity - issueQty === 0 ? "EMPTY" : "ACTIVE",
+      },
+      include: { inboundLot: true },
+      orderBy: {
+        inboundLot: { expiry_date: "asc" },
       },
     });
 
-    remainingQty -= issueQty;
-    issues.push(issue);
-  }
+    for (const pallet of pallets) {
+      if (remainingQty <= 0) break;
 
-  await prisma.productionOrder.update({
-    where: { id: production_order_id },
-    data: {
-      issued_quantity: order.required_quantity - remainingQty,
-      status: remainingQty === 0 ? "COMPLETED" : "PARTIAL",
-    },
+      const issueQty = Math.min(pallet.current_quantity, remainingQty);
+
+      const issue = await tx.materialIssue.create({
+        data: {
+          production_order_id,
+          pallet_id: pallet.id,
+          issued_quantity: issueQty,
+          override_used: false,
+        },
+      });
+
+      await tx.pallet.update({
+        where: { id: pallet.id },
+        data: {
+          current_quantity: { decrement: issueQty },
+          status:
+            pallet.current_quantity - issueQty === 0
+              ? "EMPTY"
+              : "ACTIVE",
+        },
+      });
+
+      remainingQty -= issueQty;
+      issues.push(issue);
+    }
+
+    await tx.productionOrder.update({
+      where: { id: production_order_id },
+      data: {
+        issued_quantity:
+          order.required_quantity - remainingQty,
+        status: remainingQty === 0 ? "COMPLETED" : "PARTIAL",
+      },
+    });
   });
 
   res.json({
-    message: "Material issued using FIFE",
+    message:
+      remainingQty === 0
+        ? "Material issued fully using FIFE"
+        : "Partial issue – insufficient stock",
+    issued_quantity:
+      order.required_quantity - remainingQty,
+    remaining_required: remainingQty,
     issues,
   });
 };
