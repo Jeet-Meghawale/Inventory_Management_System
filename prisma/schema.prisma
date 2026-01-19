@@ -1,0 +1,284 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+//////////////////////////////////////////////////////
+// ENUMS
+//////////////////////////////////////////////////////
+
+enum Role {
+  INBOUND
+  QC
+  MANAGER
+  PRODUCTION
+}
+
+enum QCStatus {
+  HOLD
+  ACCEPTED
+  REJECTED
+}
+
+enum PalletStatus {
+  ACTIVE
+  EMPTY
+  DISPOSED
+}
+
+enum LocationType {
+  RACK
+  GROUND
+}
+
+enum OrderStatus {
+  OPEN
+  PARTIAL
+  COMPLETED
+}
+
+enum AuditAction {
+  EDIT
+  DELETE
+  OVERRIDE
+}
+
+//////////////////////////////////////////////////////
+// USER
+//////////////////////////////////////////////////////
+
+model User {
+  id            String   @id @default(uuid())
+  name          String
+  email         String   @unique
+  password_hash String
+  role          Role
+  is_active     Boolean  @default(true)
+  created_at    DateTime @default(now())
+
+  // Inbound
+  inboundLots InboundLot[] @relation("InboundCreatedBy")
+
+  // QC
+  qcInspections QCInspection[]
+
+  // Production
+  issuedOrders ProductionOrder[] @relation("ProductionRequestedBy")
+
+  // Units
+  unitsCreated Unit[]
+
+  // Pallet movements
+  palletMoves PalletMovement[]
+
+  // Approvals
+  approvedIssues MaterialIssue[]
+
+  // Audit
+  audits AuditLog[]
+
+  @@map("User")
+}
+
+//////////////////////////////////////////////////////
+// UNIT (kg, bag, liter etc.)
+//////////////////////////////////////////////////////
+
+model Unit {
+  id        Int     @id @default(autoincrement())
+  unit_name String  @unique
+  is_active Boolean @default(true)
+
+  created_by String
+  creator    User   @relation(fields: [created_by], references: [id])
+
+  inboundLots      InboundLot[]
+  pallets          Pallet[]
+  productionOrders ProductionOrder[]
+
+  @@map("unit")
+}
+
+//////////////////////////////////////////////////////
+// INBOUND LOT (RAW MATERIAL ENTRY)
+//////////////////////////////////////////////////////
+
+model InboundLot {
+  id             String   @id @default(uuid())
+  company_name   String
+  material_name  String
+  batch_no       String?
+  expiry_date    DateTime
+  total_quantity Float
+  unit_id        Int
+
+  qc_status  QCStatus @default(HOLD)
+  created_at DateTime @default(now())
+
+  created_by String
+  creator    User   @relation("InboundCreatedBy", fields: [created_by], references: [id])
+  unit       Unit   @relation(fields: [unit_id], references: [id])
+
+  qcInspection QCInspection?
+  pallets      Pallet[]
+  expiryAlerts ExpiryAlert[]
+
+  @@map("inboundlot")
+}
+
+//////////////////////////////////////////////////////
+// QC INSPECTION
+//////////////////////////////////////////////////////
+
+model QCInspection {
+  id             String   @id @default(uuid())
+  inbound_lot_id String   @unique
+  result         QCStatus
+  remarks        String?
+  inspected_at   DateTime @default(now())
+
+  inspected_by String
+  inspector    User       @relation(fields: [inspected_by], references: [id])
+  inboundLot   InboundLot @relation(fields: [inbound_lot_id], references: [id])
+
+  @@map("qcinpection")
+}
+
+//////////////////////////////////////////////////////
+// PALLET
+//////////////////////////////////////////////////////
+
+model Pallet {
+  id               String       @id @default(uuid())
+  pallet_code      String       @unique
+  inbound_lot_id   String
+  current_quantity Float
+  unit_id          Int
+  status           PalletStatus @default(ACTIVE)
+
+  inboundLot InboundLot @relation(fields: [inbound_lot_id], references: [id])
+  unit       Unit       @relation(fields: [unit_id], references: [id])
+
+  movements PalletMovement[]
+  issues    MaterialIssue[]
+
+  @@map("pallet")
+}
+
+//////////////////////////////////////////////////////
+// LOCATION (RACK / GROUND)
+//////////////////////////////////////////////////////
+
+model Location {
+  id            String       @id @default(uuid())
+  location_type LocationType
+  rack_code     String?
+  shelf_code    String?
+
+  movementsFrom PalletMovement[] @relation("FromLocation")
+  movementsTo   PalletMovement[] @relation("ToLocation")
+
+  @@map("location")
+}
+
+//////////////////////////////////////////////////////
+// PALLET MOVEMENT (AUDIT CRITICAL)
+//////////////////////////////////////////////////////
+
+model PalletMovement {
+  id               String   @id @default(uuid())
+  pallet_id        String
+  from_location_id String?
+  to_location_id   String
+  moved_quantity   Float
+  moved_at         DateTime @default(now())
+
+  moved_by String
+  mover    User   @relation(fields: [moved_by], references: [id])
+
+  pallet       Pallet    @relation(fields: [pallet_id], references: [id])
+  fromLocation Location? @relation("FromLocation", fields: [from_location_id], references: [id])
+  toLocation   Location  @relation("ToLocation", fields: [to_location_id], references: [id])
+
+  @@map("palletmovement")
+}
+
+//////////////////////////////////////////////////////
+// PRODUCTION ORDER
+//////////////////////////////////////////////////////
+
+model ProductionOrder {
+  id                String      @id @default(uuid())
+  material_name     String
+  required_quantity Float
+  issued_quantity   Float       @default(0)
+  unit_id           Int
+  status            OrderStatus @default(OPEN)
+  created_at        DateTime    @default(now())
+
+  requested_by String
+  requester    User   @relation("ProductionRequestedBy", fields: [requested_by], references: [id])
+  unit         Unit   @relation(fields: [unit_id], references: [id])
+
+  issues MaterialIssue[]
+
+  @@map("productionorder")
+}
+
+//////////////////////////////////////////////////////
+// MATERIAL ISSUE (INBOUND → PRODUCTION)
+//////////////////////////////////////////////////////
+
+model MaterialIssue {
+  id                  String   @id @default(uuid())
+  production_order_id String
+  pallet_id           String
+  issued_quantity     Float
+  override_used       Boolean  @default(false)
+  issued_at           DateTime @default(now())
+
+  approved_by String?
+  approver    User?   @relation(fields: [approved_by], references: [id])
+
+  productionOrder ProductionOrder @relation(fields: [production_order_id], references: [id])
+  pallet          Pallet          @relation(fields: [pallet_id], references: [id])
+
+  @@map("materialissue")
+}
+
+//////////////////////////////////////////////////////
+// EXPIRY ALERT
+//////////////////////////////////////////////////////
+
+model ExpiryAlert {
+  id             String   @id @default(uuid())
+  inbound_lot_id String
+  alert_date     DateTime
+  resolved       Boolean  @default(false)
+
+  inboundLot InboundLot @relation(fields: [inbound_lot_id], references: [id])
+
+  @@map("expiryalert")
+}
+
+//////////////////////////////////////////////////////
+// AUDIT LOG (MANAGER ACTIONS)
+//////////////////////////////////////////////////////
+
+model AuditLog {
+  id           String      @id @default(uuid())
+  entity_name  String
+  entity_id    String
+  action       AuditAction
+  reason       String
+  performed_at DateTime    @default(now())
+
+  performed_by String
+  performer    User   @relation(fields: [performed_by], references: [id])
+
+  @@map("auditlog")
+}
